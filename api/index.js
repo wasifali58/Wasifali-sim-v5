@@ -16,26 +16,19 @@ const COOKIES = {
 };
 
 function getCookieString() {
-  return Object.entries(COOKIES)
-    .map(([key, value]) => `${key}=${value}`)
-    .join('; ');
+  return Object.entries(COOKIES).map(([k,v]) => `${k}=${v}`).join('; ');
 }
 
-function cleanText(text) {
-  if (!text) return 'N/A';
-  return text
-    .replace(/<[^>]*>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+function clean(str) {
+  if (!str) return 'N/A';
+  return str.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function extractRealData(html, phone) {
-  // Remove script and style tags content so they don't interfere
   let cleanHtml = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
                       .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ');
   
-  const record = {
+  const result = {
     Name: 'N/A',
     Mobile: phone,
     CNIC: 'N/A',
@@ -48,76 +41,114 @@ function extractRealData(html, phone) {
     Union_Council: 'N/A'
   };
 
-  // 1. Extract CNIC (13 digits) - most reliable
+  // 1. CNIC - 13 digits
   const cnicMatch = cleanHtml.match(/\b\d{13}\b/);
-  if (cnicMatch) record.CNIC = cnicMatch[0];
+  if (cnicMatch) result.CNIC = cnicMatch[0];
 
-  // 2. Extract Name from visible text (not inside inputs)
-  const namePatterns = [
-    /Name<\/th>\s*<td[^>]*>([^<]+)<\/td>/i,
-    /Owner\s*Name<\/th>\s*<td[^>]*>([^<]+)<\/td>/i,
-    /<strong>Name<\/strong>\s*:\s*([^<]+)/i,
-    /"name":"([^"]+)"/i
-  ];
-  for (let p of namePatterns) {
-    const m = cleanHtml.match(p);
-    if (m && m[1] && !m[1].includes('placeholder') && m[1].length < 100) {
-      record.Name = cleanText(m[1]);
-      break;
+  // 2. JSON data
+  const jsonRegex = /<script[^>]*type=["'](?:application\/json|application\/ld\+json)["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let match;
+  while ((match = jsonRegex.exec(html)) !== null) {
+    try {
+      const json = JSON.parse(match[1]);
+      const extractJson = (obj) => {
+        if (typeof obj !== 'object') return;
+        if (obj.name && typeof obj.name === 'string' && !obj.name.includes('{') && obj.name.length < 100) result.Name = clean(obj.name);
+        if (obj.cnic && typeof obj.cnic === 'string') result.CNIC = clean(obj.cnic);
+        if (obj.address) result.Address = clean(obj.address);
+        if (obj.province) result.Province = clean(obj.province);
+        if (obj.city) result.City = clean(obj.city);
+        if (obj.network || obj.operator) result.Network = clean(obj.network || obj.operator);
+        if (obj.status) result.Status = clean(obj.status);
+        if (obj.gender) result.Gender = clean(obj.gender);
+        for (let key in obj) {
+          if (typeof obj[key] === 'object') extractJson(obj[key]);
+        }
+      };
+      extractJson(json);
+    } catch(e) {}
+  }
+
+  // 3. Table rows
+  const tableRows = cleanHtml.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi);
+  if (tableRows) {
+    for (let row of tableRows) {
+      const th = row.match(/<th[^>]*>([\s\S]*?)<\/th>/i);
+      const td = row.match(/<td[^>]*>([\s\S]*?)<\/td>/i);
+      if (th && td) {
+        let label = clean(th[1]).toLowerCase();
+        let value = clean(td[1]);
+        if (value === 'N/A' || value.includes('placeholder')) continue;
+        if (label.includes('name') && !label.includes('placeholder')) result.Name = value;
+        else if (label.includes('cnic')) result.CNIC = value;
+        else if (label.includes('address')) result.Address = value;
+        else if (label.includes('province')) result.Province = value;
+        else if (label.includes('city') || label.includes('district')) result.City = value;
+        else if (label.includes('network') || label.includes('operator')) result.Network = value;
+        else if (label.includes('status')) result.Status = value;
+        else if (label.includes('gender')) result.Gender = value;
+        else if (label.includes('union') || label.includes('uc')) result.Union_Council = value;
+      }
     }
   }
 
-  // 3. Address
-  const addrPatterns = [
-    /Address<\/th>\s*<td[^>]*>([^<]+)<\/td>/i,
-    /<strong>Address<\/strong>\s*:\s*([^<]+)/i,
-    /"address":"([^"]+)"/i
-  ];
-  for (let p of addrPatterns) {
-    const m = cleanHtml.match(p);
-    if (m && m[1] && !m[1].includes('placeholder')) {
-      record.Address = cleanText(m[1]);
-      break;
+  // 4. Div blocks
+  const divBlocks = cleanHtml.match(/<div[^>]*class="[^"]*(?:sim|owner|detail|info)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi);
+  if (divBlocks) {
+    for (let div of divBlocks) {
+      const pairs = div.match(/<span[^>]*class="[^"]*label[^"]*"[^>]*>([\s\S]*?)<\/span>\s*<span[^>]*class="[^"]*value[^"]*"[^>]*>([\s\S]*?)<\/span>/gi);
+      if (pairs) {
+        for (let pair of pairs) {
+          const labelMatch = pair.match(/<span[^>]*class="[^"]*label[^"]*"[^>]*>([\s\S]*?)<\/span>/i);
+          const valueMatch = pair.match(/<span[^>]*class="[^"]*value[^"]*"[^>]*>([\s\S]*?)<\/span>/i);
+          if (labelMatch && valueMatch) {
+            let label = clean(labelMatch[1]).toLowerCase();
+            let value = clean(valueMatch[1]);
+            if (value === 'N/A' || value.includes('placeholder')) continue;
+            if (label.includes('name')) result.Name = value;
+            else if (label.includes('cnic')) result.CNIC = value;
+            else if (label.includes('address')) result.Address = value;
+            else if (label.includes('province')) result.Province = value;
+            else if (label.includes('city')) result.City = value;
+            else if (label.includes('network')) result.Network = value;
+            else if (label.includes('status')) result.Status = value;
+            else if (label.includes('gender')) result.Gender = value;
+          }
+        }
+      }
     }
   }
 
-  // 4. Province
-  const provMatch = cleanHtml.match(/Province<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) ||
-                    cleanHtml.match(/Punjab|Sindh|KPK|Balochistan|Islamabad/i);
-  if (provMatch) record.Province = cleanText(provMatch[1] || provMatch[0]);
+  // 5. Fallback direct patterns (avoid placeholders)
+  const patterns = {
+    Name: /(?:Name|Owner)\s*:\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i,
+    Address: /Address\s*:\s*([^<\n]+)/i,
+    Province: /Province\s*:\s*([^<\n]+)/i,
+    City: /City\s*:\s*([^<\n]+)/i,
+    Network: /(?:Network|Operator)\s*:\s*([^<\n]+)/i,
+    Status: /Status\s*:\s*([^<\n]+)/i,
+    Gender: /Gender\s*:\s*([^<\n]+)/i
+  };
+  for (let [key, regex] of Object.entries(patterns)) {
+    if (result[key] === 'N/A') {
+      const m = cleanHtml.match(regex);
+      if (m && m[1] && !m[1].includes('placeholder') && m[1].length < 50) result[key] = clean(m[1]);
+    }
+  }
 
-  // 5. City
-  const cityMatch = cleanHtml.match(/City<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) ||
-                    cleanHtml.match(/Lahore|Karachi|Islamabad|Rawalpindi|Multan|Faisalabad|Quetta|Peshawar/i);
-  if (cityMatch) record.City = cleanText(cityMatch[1] || cityMatch[0]);
-
-  // 6. Network
-  const netMatch = cleanHtml.match(/Network<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) ||
-                   cleanHtml.match(/Jazz|Zong|Telenor|Ufone|Warid/i);
-  if (netMatch) record.Network = cleanText(netMatch[1] || netMatch[0]);
-
-  // 7. Status
-  const statusMatch = cleanHtml.match(/Status<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) ||
-                      cleanHtml.match(/Active|Inactive|Blocked/i);
-  if (statusMatch) record.Status = cleanText(statusMatch[1] || statusMatch[0]);
-
-  // 8. Gender
-  const genderMatch = cleanHtml.match(/Gender<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) ||
-                      cleanHtml.match(/Male|Female/i);
-  if (genderMatch) record.Gender = cleanText(genderMatch[1] || genderMatch[0]);
-
-  // 9. Union Council
-  const ucMatch = cleanHtml.match(/Union\s*Council<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) ||
-                  cleanHtml.match(/UC<\/th>\s*<td[^>]*>([^<]+)<\/td>/i);
-  if (ucMatch) record.Union_Council = cleanText(ucMatch[1]);
-
-  // If still no name, try to find any text that looks like a person name (two words, not too long)
-  if (record.Name === 'N/A') {
+  // 6. If Name still generic, try proper name pattern
+  if (result.Name === 'N/A' || result.Name === 'Sim Owner' || result.Name.length < 3) {
     const possibleName = cleanHtml.match(/([A-Z][a-z]+)\s+([A-Z][a-z]+)/);
-    if (possibleName && possibleName[0].length < 30) record.Name = possibleName[0];
+    if (possibleName && possibleName[0].length < 30 && !possibleName[0].includes('Script')) result.Name = possibleName[0];
   }
 
-  return record;
+  // Final cleanup
+  for (let key in result) {
+    if (typeof result[key] === 'string') result[key] = result[key].replace(/&[a-z]+;/g, ' ').trim();
+    if (result[key] === '' || result[key] === 'N/A') result[key] = 'N/A';
+  }
+
+  return result;
 }
 
 module.exports = async (req, res) => {
@@ -125,7 +156,6 @@ module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
 
   const { search } = req.method === 'GET' ? req.query : req.body;
-
   if (!search) {
     return res.json({
       success: false,
@@ -142,9 +172,8 @@ module.exports = async (req, res) => {
     const response = await axios.get(TARGET_URL, {
       params: { sim_info_mobile: phoneWithZero },
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9,ur-PK;q=0.8,ur;q=0.7',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/146.0.0.0 Mobile Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Referer': REFERER,
         'Cookie': getCookieString(),
         'DNT': '1',
@@ -153,30 +182,16 @@ module.exports = async (req, res) => {
       timeout: 20000
     });
 
-    const html = response.data;
-    const record = extractRealData(html, phoneWithZero);
-
-    // Check if we got any real data
+    const record = extractRealData(response.data, phoneWithZero);
     const hasData = record.Name !== 'N/A' || record.CNIC !== 'N/A' || record.Address !== 'N/A';
-    
-    if (!hasData) {
-      return res.json({
-        success: false,
-        message: '❌ No data found for this number',
-        records: [],
-        developer: 'WASIF ALI',
-        telegram: '@FREEHACKS95'
-      });
-    }
 
     return res.json({
-      success: true,
-      message: '✅ Record found',
-      records: [record],
+      success: hasData,
+      message: hasData ? '✅ Record found' : '❌ No data found',
+      records: hasData ? [record] : [],
       developer: 'WASIF ALI',
       telegram: '@FREEHACKS95'
     });
-
   } catch (error) {
     return res.json({
       success: false,
