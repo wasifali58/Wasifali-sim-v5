@@ -59,7 +59,7 @@ module.exports = async (req, res) => {
         'DNT': '1',
         'Upgrade-Insecure-Requests': '1'
       },
-      timeout: 20000
+      timeout: 9000 // 👈 Vercel Crash Fix (Timeout set to 9 seconds)
     });
 
     const html = response.data;
@@ -84,9 +84,15 @@ module.exports = async (req, res) => {
     }
 
   } catch (error) {
+    // Graceful error handling for timeout
+    let errorMsg = error.message;
+    if (error.code === 'ECONNABORTED') {
+        errorMsg = 'Request Timeout: Target website is taking too long to respond.';
+    }
+    
     return sendResponse({
       success: false,
-      message: '⚠️ Error: ' + error.message,
+      message: '⚠️ Error: ' + errorMsg,
       records: [],
       developer: 'WASIF ALI',
       telegram: '@FREEHACKS95'
