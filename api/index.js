@@ -13,31 +13,7 @@ const COOKIES = {
 };
 
 function getCookieString() {
-  return Object.entries(COOKIES).map(([key, value]) => `${key}=${value}`).join('; ');
-}
-
-function cleanText(text) {
-  if (!text) return 'N/A';
-  let cleaned = text.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
-  if (cleaned.length > 200) cleaned = cleaned.substring(0, 200);
-  if (/transform|opacity|animation|webkit|@media|{}/i.test(cleaned)) return 'N/A';
-  return cleaned;
-}
-
-function extractField(html, keyword) {
-  const tablePattern = new RegExp(`<th[^>]*>\\s*${keyword}\\s*<\\/th>\\s*<td[^>]*>\\s*([\\s\\S]*?)\\s*<\\/td>`, 'i');
-  const match1 = html.match(tablePattern);
-  if (match1 && match1[1]) {
-    const val = cleanText(match1[1]);
-    if (val !== 'N/A') return val;
-  }
-  const strongPattern = new RegExp(`<strong>${keyword}<\\/strong>\\s*:\\s*([^<]+)`, 'i');
-  const match2 = html.match(strongPattern);
-  if (match2 && match2[1]) return cleanText(match2[1]);
-  const simplePattern = new RegExp(`${keyword}\\s*[:=-]\\s*([^<\\n]{1,150})`, 'i');
-  const match3 = html.match(simplePattern);
-  if (match3 && match3[1]) return cleanText(match3[1]);
-  return 'N/A';
+  return Object.entries(COOKIES).map(([k, v]) => `${k}=${v}`).join('; ');
 }
 
 module.exports = async (req, res) => {
@@ -127,31 +103,45 @@ function parseHTML(html, phone) {
   try {
     let cleanHtml = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ');
     cleanHtml = cleanHtml.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ');
+    cleanHtml = cleanHtml.replace(/<meta[^>]*>/gi, ' ');
+    cleanHtml = cleanHtml.replace(/<link[^>]*>/gi, ' ');
+    cleanHtml = cleanHtml.replace(/<noscript[^>]*>.*?<\/noscript>/gi, ' ');
     cleanHtml = cleanHtml.replace(/\n|\r/g, ' ').replace(/&nbsp;/g, ' ');
+    cleanHtml = cleanHtml.replace(/\s+/g, ' ');
 
-    const name = extractField(cleanHtml, 'Name');
-    const finalName = (name !== 'N/A') ? name : extractField(cleanHtml, 'Owner');
+    function extractTableField(keyword) {
+      const regex = new RegExp(`<th[^>]*>\\s*${keyword}\\s*<\\/th>\\s*<td[^>]*>\\s*([\\s\\S]*?)\\s*<\\/td>`, 'i');
+      const match = cleanHtml.match(regex);
+      if (match && match[1]) {
+        let val = match[1].replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+        if (val.length > 0 && val.length < 200 && !/viewport|transform|opacity/i.test(val)) {
+          return val;
+        }
+      }
+      return 'N/A';
+    }
+
+    const name = extractTableField('Name');
+    const finalName = name !== 'N/A' ? name : extractTableField('Owner');
     
-    let cnic = extractField(cleanHtml, 'CNIC');
-    if (cnic === 'N/A') cnic = extractField(cleanHtml, 'ID');
+    let cnic = extractTableField('CNIC');
+    if (cnic === 'N/A') cnic = extractTableField('ID');
     const cnicDigits = cnic.replace(/\D/g, '');
     
-    const address = extractField(cleanHtml, 'Address');
-    const city = extractField(cleanHtml, 'City');
-    const unionCouncil = extractField(cleanHtml, 'Union Council');
-    const uc = (unionCouncil !== 'N/A') ? unionCouncil : extractField(cleanHtml, 'UC');
-    const status = extractField(cleanHtml, 'Status');
-    const finalStatus = (status !== 'N/A') ? status : 'Active';
+    const address = extractTableField('Address');
+    const city = extractTableField('City');
+    let uc = extractTableField('Union Council');
+    if (uc === 'N/A') uc = extractTableField('UC');
+    let status = extractTableField('Status');
+    if (status === 'N/A') status = 'Active';
     
-    let network = extractField(cleanHtml, 'Network');
-    if (network === 'N/A') network = extractField(cleanHtml, 'Operator');
+    let network = extractTableField('Network');
+    if (network === 'N/A') network = extractTableField('Operator');
 
-    // Gender: first try site's own Gender field
-    let gender = extractField(cleanHtml, 'Gender');
-    if (gender === 'N/A') gender = extractField(cleanHtml, 'Sex');
+    let gender = extractTableField('Gender');
+    if (gender === 'N/A') gender = extractTableField('Sex');
 
-    // Province: try site first, else from CNIC
-    let province = extractField(cleanHtml, 'Province');
+    let province = extractTableField('Province');
     if (province === 'N/A' && cnicDigits.length === 13) {
       const firstDigit = cnicDigits.charAt(0);
       const provinceMap = {
@@ -162,7 +152,6 @@ function parseHTML(html, phone) {
       province = provinceMap[firstDigit] || 'N/A';
     }
 
-    // Gender fallback: CNIC last digit (only if site didn't give)
     if (gender === 'N/A' && cnicDigits.length === 13) {
       const lastDigit = parseInt(cnicDigits.charAt(12));
       gender = (lastDigit % 2 === 0) ? 'Female' : 'Male';
@@ -177,7 +166,7 @@ function parseHTML(html, phone) {
         Province: province,
         City: city,
         Network: network,
-        Status: finalStatus,
+        Status: status,
         Gender: gender,
         Union_Council: uc
       });
