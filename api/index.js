@@ -1,4 +1,4 @@
-const axios = require('axios');
+// Koi axios require nahi karna. Native fetch use ho raha hai!
 
 // NEW API - datacorporation.com.pk
 const TARGET_URL = 'https://ownerdetail.datacorporation.com.pk/result-page/';
@@ -55,8 +55,15 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const response = await axios.get(TARGET_URL, {
-      params: { sim_info_mobile: queryParam },
+    const url = new URL(TARGET_URL);
+    url.searchParams.append('sim_info_mobile', queryParam);
+
+    // Vercel 9-Second Timeout Logic with Native Fetch
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 9000);
+
+    const response = await fetch(url.toString(), {
+      method: 'GET',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
@@ -66,10 +73,16 @@ module.exports = async (req, res) => {
         'DNT': '1',
         'Upgrade-Insecure-Requests': '1'
       },
-      timeout: 9000 // Timeout set to 9 seconds to avoid Vercel crash
+      signal: controller.signal // Attaches the timeout
     });
 
-    const html = response.data;
+    clearTimeout(timeoutId); // Clear timeout if response is successful
+
+    if (!response.ok) {
+       throw new Error(`Target API blocked request or failed with status ${response.status}`);
+    }
+
+    const html = await response.text();
     const result = parseHTML(html, queryParam);
 
     if (result.found) {
@@ -93,7 +106,7 @@ module.exports = async (req, res) => {
   } catch (error) {
     // Graceful error handling for timeout
     let errorMsg = error.message;
-    if (error.code === 'ECONNABORTED') {
+    if (error.name === 'AbortError') {
         errorMsg = 'Request Timeout: Target website is taking too long to respond.';
     }
     
@@ -112,7 +125,7 @@ function parseHTML(html, searchQuery) {
   let records = [];
   
   try {
-    // Clean HTML from dangerous tags (CSS, JS, Meta) that cause parsing bugs
+    // Clean HTML from dangerous tags
     let cleanBody = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
                         .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
                         .replace(/<meta[^>]*>/gi, '')
@@ -146,7 +159,7 @@ function parseHTML(html, searchQuery) {
 
             if (rows.length === 0) return;
 
-            // Strategy A: Vertical Table (Key in col 1, Value in col 2)
+            // Strategy A: Vertical Table
             if (rows.every(r => r.length === 2) || rows[0].length === 2) {
                 let currentRecord = {};
                 rows.forEach(r => {
@@ -163,7 +176,7 @@ function parseHTML(html, searchQuery) {
                 });
                 if (Object.keys(currentRecord).length > 0) records.push(currentRecord);
             } 
-            // Strategy B: Horizontal Table (Headers top, values below)
+            // Strategy B: Horizontal Table
             else {
                 let headers = rows[0].map(h => h.toLowerCase());
                 for (let i = 1; i < rows.length; i++) {
