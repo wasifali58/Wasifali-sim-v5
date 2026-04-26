@@ -1,10 +1,8 @@
 const axios = require('axios');
 
-// NEW API - datacorporation.com.pk
 const TARGET_URL = 'https://ownerdetail.datacorporation.com.pk/result-page/';
 const REFERER = 'https://ownerdetail.datacorporation.com.pk/track-number/';
 
-// Cookies from browser
 const COOKIES = {
   _ga: 'GA1.1.1455301204.1770130461',
   __gads: 'ID=d6cf01242b53db4b:T=1770130463:RT=1770130463:S=ALNI_MakDvPYZ9f0HxxsHhucgw_Dqo7ibQ',
@@ -14,11 +12,92 @@ const COOKIES = {
   _ga_2BL9GP4ZMR: 'GS2.1.s1770130463$o1$g1$t1770130544$j60$l0$h0'
 };
 
-// Convert cookies object to string
 function getCookieString() {
   return Object.entries(COOKIES)
     .map(([key, value]) => `${key}=${value}`)
     .join('; ');
+}
+
+function parseHTML(html, phone) {
+  const records = [];
+  
+  try {
+    // Extract all data using regex patterns
+    const nameMatch = html.match(/Name[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
+                      html.match(/Owner[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
+                      html.match(/"name":"([^"]+)"/i) ||
+                      html.match(/<strong>Name<\/strong>[:\s]*([^<]+)/i);
+    
+    const cnicMatch = html.match(/CNIC[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
+                      html.match(/"cnic":"([^"]+)"/i) ||
+                      html.match(/\b\d{13}\b/);
+    
+    const addressMatch = html.match(/Address[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
+                         html.match(/"address":"([^"]+)"/i) ||
+                         html.match(/<strong>Address<\/strong>[:\s]*([^<]+)/i);
+    
+    const provinceMatch = html.match(/Province[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
+                          html.match(/<strong>Province<\/strong>[:\s]*([^<]+)/i) ||
+                          html.match(/Punjab|Sindh|KPK|Balochistan/i);
+    
+    const cityMatch = html.match(/City[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
+                      html.match(/<strong>City<\/strong>[:\s]*([^<]+)/i) ||
+                      html.match(/Lahore|Karachi|Islamabad|Rawalpindi|Multan|Faisalabad/i);
+    
+    const networkMatch = html.match(/Network[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
+                         html.match(/Operator[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
+                         html.match(/Jazz|Zong|Telenor|Ufone|Warid/i);
+    
+    const statusMatch = html.match(/Status[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
+                        html.match(/Active|Inactive|Blocked|Suspended/i);
+    
+    const genderMatch = html.match(/Gender[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
+                        html.match(/Male|Female|M|F/i);
+    
+    const ucMatch = html.match(/Union\s*Council[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
+                    html.match(/UC[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i);
+    
+    const name = nameMatch ? cleanText(nameMatch[1]) : 'N/A';
+    const cnic = cnicMatch ? cleanText(cnicMatch[1] || cnicMatch[0]) : 'N/A';
+    const address = addressMatch ? cleanText(addressMatch[1]) : 'N/A';
+    const province = provinceMatch ? cleanText(provinceMatch[1] || provinceMatch[0]) : 'N/A';
+    const city = cityMatch ? cleanText(cityMatch[1] || cityMatch[0]) : 'N/A';
+    const network = networkMatch ? cleanText(networkMatch[1] || networkMatch[0]) : 'N/A';
+    const status = statusMatch ? cleanText(statusMatch[1] || statusMatch[0]) : 'N/A';
+    const gender = genderMatch ? cleanText(genderMatch[1] || genderMatch[0]) : 'N/A';
+    const unionCouncil = ucMatch ? cleanText(ucMatch[1]) : 'N/A';
+    
+    if (name !== 'N/A' || cnic !== 'N/A') {
+      records.push({
+        Name: name,
+        Mobile: phone,
+        CNIC: cnic,
+        Address: address,
+        Province: province,
+        City: city,
+        Network: network,
+        Status: status,
+        Gender: gender,
+        Union_Council: unionCouncil
+      });
+    }
+    
+  } catch (e) {
+    console.error('Parse error:', e.message);
+  }
+  
+  return {
+    found: records.length > 0,
+    records: records
+  };
+}
+
+function cleanText(text) {
+  return String(text)
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 module.exports = async (req, res) => {
@@ -36,12 +115,10 @@ module.exports = async (req, res) => {
     });
   }
 
-  // Clean phone number
   const cleanPhone = search.replace(/\D/g, '');
   const phoneWithZero = cleanPhone.startsWith('0') ? cleanPhone : '0' + cleanPhone;
 
   try {
-    // Call their API
     const response = await axios.get(TARGET_URL, {
       params: { sim_info_mobile: phoneWithZero },
       headers: {
@@ -57,8 +134,6 @@ module.exports = async (req, res) => {
     });
 
     const html = response.data;
-    
-    // Parse HTML to extract data
     const result = parseHTML(html, phoneWithZero);
 
     if (result.found) {
@@ -89,73 +164,3 @@ module.exports = async (req, res) => {
     });
   }
 };
-
-// HTML parsing function
-function parseHTML(html, phone) {
-  const records = [];
-  
-  try {
-    // Pattern 1: Name extraction
-    const nameMatch = html.match(/Name[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
-                      html.match(/Owner[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
-                      html.match(/Customer[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
-                      html.match(/"name":"([^"]+)"/i);
-    
-    // Pattern 2: CNIC extraction  
-    const cnicMatch = html.match(/CNIC[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
-                      html.match(/ID[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
-                      html.match(/"cnic":"([^"]+)"/i) ||
-                      html.match(/\d{13}/);
-    
-    // Pattern 3: Address extraction
-    const addressMatch = html.match(/Address[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
-                         html.match(/"address":"([^"]+)"/i);
-    
-    // Pattern 4: Network extraction
-    const networkMatch = html.match(/Network[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i) ||
-                         html.match(/Operator[:\s]*<[^>]*>([^<]+)<\/[^>]*>/i);
-    
-    const name = nameMatch ? nameMatch[1].trim() : 'N/A';
-    const cnic = cnicMatch ? (cnicMatch[1] || cnicMatch[0]).replace(/\D/g, '') : 'N/A';
-    const address = addressMatch ? addressMatch[1].trim() : 'N/A';
-    const network = networkMatch ? networkMatch[1].trim() : detectNetwork(phone);
-    
-    if (name !== 'N/A' || cnic !== 'N/A') {
-      records.push({
-        Name: name,
-        Mobile: phone,
-        CNIC: cnic,
-        Address: address,
-        Network: network
-      });
-    }
-    
-  } catch (e) {
-    console.error('Parse error:', e.message);
-  }
-  
-  return {
-    found: records.length > 0,
-    records: records
-  };
-}
-
-// Network detection function
-function detectNetwork(phone) {
-  const clean = phone.replace(/\D/g, '');
-  const prefix = clean.substring(0, 4);
-  
-  const networks = {
-    '0300': 'Jazz', '0301': 'Jazz', '0302': 'Jazz', '0303': 'Jazz', '0304': 'Jazz',
-    '0305': 'Jazz', '0306': 'Jazz', '0307': 'Jazz', '0308': 'Jazz', '0309': 'Jazz',
-    '0310': 'Zong', '0311': 'Zong', '0312': 'Zong', '0313': 'Zong', '0314': 'Zong',
-    '0315': 'Zong', '0316': 'Zong', '0317': 'Zong', '0318': 'Zong', '0319': 'Zong',
-    '0320': 'Warid', '0321': 'Warid', '0322': 'Warid', '0323': 'Warid', '0324': 'Warid',
-    '0330': 'Ufone', '0331': 'Ufone', '0332': 'Ufone', '0333': 'Ufone', '0334': 'Ufone',
-    '0335': 'Ufone', '0336': 'Ufone',
-    '0340': 'Telenor', '0341': 'Telenor', '0342': 'Telenor', '0343': 'Telenor',
-    '0344': 'Telenor', '0345': 'Telenor', '0346': 'Telenor', '0347': 'Telenor'
-  };
-  
-  return networks[prefix] || 'Unknown';
-}
