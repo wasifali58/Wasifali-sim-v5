@@ -21,15 +21,22 @@ function getCookieString() {
 }
 
 module.exports = async (req, res) => {
+  // Setup CORS and JSON response
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Content-Type', 'application/json');
+
+  // Handle OPTIONS request for CORS preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
 
   // Helper function for Pretty Print JSON
   const sendResponse = (data) => {
     res.send(JSON.stringify(data, null, 4));
   };
 
-  const { search } = req.method === 'GET' ? req.query : req.body;
+  const { search } = req.method === 'GET' ? req.query : req.body || {};
 
   if (!search) {
     return sendResponse({
@@ -41,7 +48,7 @@ module.exports = async (req, res) => {
   }
 
   // Smart Search Cleaning: Handles both Mobile (starts with 0) and CNIC (13 digits)
-  const cleanSearch = search.replace(/\D/g, '');
+  const cleanSearch = String(search).replace(/\D/g, '');
   let queryParam = cleanSearch;
   if (cleanSearch.length < 13 && !cleanSearch.startsWith('0')) {
     queryParam = '0' + cleanSearch;
@@ -59,7 +66,7 @@ module.exports = async (req, res) => {
         'DNT': '1',
         'Upgrade-Insecure-Requests': '1'
       },
-      timeout: 9000 // 👈 Vercel Crash Fix (Timeout set to 9 seconds)
+      timeout: 9000 // Timeout set to 9 seconds to avoid Vercel crash
     });
 
     const html = response.data;
@@ -105,14 +112,14 @@ function parseHTML(html, searchQuery) {
   let records = [];
   
   try {
-    // 1. Clean HTML from dangerous tags (CSS, JS, Meta) that cause parsing bugs
+    // Clean HTML from dangerous tags (CSS, JS, Meta) that cause parsing bugs
     let cleanBody = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
                         .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
                         .replace(/<meta[^>]*>/gi, '')
                         .replace(/<link[^>]*>/gi, '')
                         .replace(//g, '');
 
-    // 2. Extract tables
+    // Extract tables
     const tableRegex = /<table[^>]*>([\s\S]*?)<\/table>/gi;
     let tables = [];
     let match;
@@ -120,7 +127,7 @@ function parseHTML(html, searchQuery) {
         tables.push(match[1]);
     }
 
-    // 3. Parse tables
+    // Parse tables
     if (tables.length > 0) {
         tables.forEach(tableHtml => {
             const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
@@ -147,7 +154,6 @@ function parseHTML(html, searchQuery) {
                         let key = r[0].toLowerCase();
                         let val = r[1];
                         
-                        // If we see 'name' again, push previous record (Handles multiple records in one long table)
                         if (key.includes('name') && currentRecord.Name) {
                             records.push({...currentRecord});
                             currentRecord = {};
@@ -172,20 +178,18 @@ function parseHTML(html, searchQuery) {
         });
     }
 
-    // Process and finalize records to ensure layout matches requirements
+    // Process and finalize records
     let formattedRecords = [];
     records.forEach(rec => {
        if (rec.Name || rec.Mobile || rec.CNIC) {
            let cnic = (rec.CNIC || '').replace(/\D/g, '');
            let mobile = (rec.Mobile || '').replace(/\D/g, '');
            
-           // Fallback to search query if mobile is empty on CNIC search
            if (!mobile && searchQuery.length < 12) mobile = searchQuery;
            
            let prov = rec.Province || 'N/A';
            let gen = rec.Gender || 'N/A';
            
-           // Auto-calculate Province & Gender from CNIC (highly reliable)
            if (cnic.length >= 13) {
                let lastDigit = parseInt(cnic.charAt(12));
                gen = (lastDigit % 2 === 0) ? 'Female' : 'Male';
@@ -218,7 +222,7 @@ function parseHTML(html, searchQuery) {
   }
 }
 
-// Helper to map dynamic keys to our standard object
+// Helper to map dynamic keys
 function assignValue(obj, keyStr, value) {
     if (!value) return;
     let val = value.trim();
