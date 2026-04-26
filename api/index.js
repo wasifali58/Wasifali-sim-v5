@@ -21,7 +21,6 @@ module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
 
   const { search } = req.method === 'GET' ? req.query : req.body;
-
   if (!search) {
     return res.send(JSON.stringify({
       success: false,
@@ -57,7 +56,7 @@ module.exports = async (req, res) => {
     });
 
     const html = response.data;
-    const record = extractRecord(html, phoneWithZero);
+    const record = extractSimpleData(html, phoneWithZero);
 
     if (record.Name !== 'N/A' || record.CNIC !== 'N/A') {
       return res.send(JSON.stringify({
@@ -87,42 +86,48 @@ module.exports = async (req, res) => {
   }
 };
 
-function extractRecord(html, phone) {
-  // Remove scripts, styles, meta, links
-  let clean = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ');
-  clean = clean.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ');
-  clean = clean.replace(/<meta[^>]*>/gi, ' ');
-  clean = clean.replace(/<link[^>]*>/gi, ' ');
-  clean = clean.replace(/\n|\r/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
+function extractSimpleData(html, phone) {
+  // Clean HTML exactly like Gemini's working version
+  let cleanHtml = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ');
+  cleanHtml = cleanHtml.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ');
+  cleanHtml = cleanHtml.replace(/<meta[^>]*>/gi, ' ');
+  cleanHtml = cleanHtml.replace(/<link[^>]*>/gi, ' ');
+  cleanHtml = cleanHtml.replace(/\n|\r/g, ' ').replace(/&nbsp;/g, ' ');
+  cleanHtml = cleanHtml.replace(/\s+/g, ' ');
 
-  // Helper: extract value after a label in table
-  function extract(label) {
-    // Pattern: <th>Label</th> <td>value</td>
-    const tableRegex = new RegExp(`<th[^>]*>\\s*${label}\\s*<\\/th>\\s*<td[^>]*>\\s*([^<]+)\\s*<\\/td>`, 'i');
-    let m = clean.match(tableRegex);
-    if (m && m[1] && m[1].length < 200 && !/transform|opacity|viewport/i.test(m[1])) {
-      return m[1].trim();
+  // Gemini's advanced extractField function
+  function extractField(keyword) {
+    // Pattern 1: Table structure
+    let regex = new RegExp(`${keyword}[^<]*<\/(?:td|th|span|div|strong|b)>\\s*<(?:td|th|span|div)[^>]*>\\s*([^<]+)`, 'i');
+    let match = cleanHtml.match(regex);
+    if (match && match[1] && match[1].trim() !== '') {
+      let val = match[1].trim();
+      if (val.length < 200 && !/transform|opacity|viewport/i.test(val)) return val;
     }
-    // Pattern: Label: value
-    const simpleRegex = new RegExp(`${label}\\s*[:=-]\\s*([^<]{1,150})`, 'i');
-    m = clean.match(simpleRegex);
-    if (m && m[1]) return m[1].trim();
+    // Pattern 2: Label: Value
+    regex = new RegExp(`${keyword}\\s*[:=-]\\s*(?:<[^>]+>)*\\s*([^<]+)`, 'i');
+    match = cleanHtml.match(regex);
+    if (match && match[1] && match[1].trim() !== '') return match[1].trim();
+    // Pattern 3: Generic tag
+    regex = new RegExp(`(?:>|"${keyword}"?[:>\\s]*)(?:<[^>]+>)*${keyword}(?:<[^>]+>)*[:\\s]*(?:<[^>]+>)*([^<]+)`, 'i');
+    match = cleanHtml.match(regex);
+    if (match && match[1] && match[1].trim() !== '') return match[1].trim();
     return 'N/A';
   }
 
-  let name = extract('Name');
-  if (name === 'N/A') name = extract('Owner');
+  let name = extractField('Name');
+  if (name === 'N/A') name = extractField('Owner');
   
-  let cnic = extract('CNIC');
-  if (cnic === 'N/A') cnic = extract('ID');
+  let cnic = extractField('CNIC');
+  if (cnic === 'N/A') cnic = extractField('ID');
   cnic = cnic.replace(/\D/g, '');
   if (cnic.length !== 13) cnic = 'N/A';
   
-  let network = extract('Network');
-  if (network === 'N/A') network = extract('Operator');
+  let network = extractField('Network');
+  if (network === 'N/A') network = extractField('Operator');
   
-  let address = extract('Address');
-  
+  let address = extractField('Address');
+
   return {
     Name: name,
     Mobile: phone,
