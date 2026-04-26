@@ -16,16 +16,12 @@ function getCookieString() {
   return Object.entries(COOKIES).map(([k, v]) => `${k}=${v}`).join('; ');
 }
 
-function cleanText(text) {
-  if (!text) return 'N/A';
-  return text.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Content-Type', 'application/json');
 
   const { search } = req.method === 'GET' ? req.query : req.body;
+
   if (!search) {
     return res.send(JSON.stringify({
       success: false,
@@ -61,7 +57,7 @@ module.exports = async (req, res) => {
     });
 
     const html = response.data;
-    const record = extractSimpleData(html, phoneWithZero);
+    const record = extractRecord(html, phoneWithZero);
 
     if (record.Name !== 'N/A' || record.CNIC !== 'N/A') {
       return res.send(JSON.stringify({
@@ -91,26 +87,26 @@ module.exports = async (req, res) => {
   }
 };
 
-function extractSimpleData(html, phone) {
-  // Clean HTML
+function extractRecord(html, phone) {
+  // Remove scripts, styles, meta, links
   let clean = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ');
   clean = clean.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ');
   clean = clean.replace(/<meta[^>]*>/gi, ' ');
   clean = clean.replace(/<link[^>]*>/gi, ' ');
-  clean = clean.replace(/\n|\r/g, ' ').replace(/&nbsp;/g, ' ');
+  clean = clean.replace(/\n|\r/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
 
-  function extract(keyword) {
-    // Table pattern
-    let regex = new RegExp(`<th[^>]*>\\s*${keyword}\\s*<\\/th>\\s*<td[^>]*>\\s*([\\s\\S]*?)\\s*<\\/td>`, 'i');
-    let match = clean.match(regex);
-    if (match && match[1]) {
-      let val = match[1].replace(/<[^>]*>/g, '').trim();
-      if (val && val.length < 200 && !/viewport|transform/i.test(val)) return val;
+  // Helper: extract value after a label in table
+  function extract(label) {
+    // Pattern: <th>Label</th> <td>value</td>
+    const tableRegex = new RegExp(`<th[^>]*>\\s*${label}\\s*<\\/th>\\s*<td[^>]*>\\s*([^<]+)\\s*<\\/td>`, 'i');
+    let m = clean.match(tableRegex);
+    if (m && m[1] && m[1].length < 200 && !/transform|opacity|viewport/i.test(m[1])) {
+      return m[1].trim();
     }
-    // Label: Value pattern
-    regex = new RegExp(`${keyword}\\s*[:=-]\\s*([^<\\n]{1,150})`, 'i');
-    match = clean.match(regex);
-    if (match && match[1]) return match[1].trim();
+    // Pattern: Label: value
+    const simpleRegex = new RegExp(`${label}\\s*[:=-]\\s*([^<]{1,150})`, 'i');
+    m = clean.match(simpleRegex);
+    if (m && m[1]) return m[1].trim();
     return 'N/A';
   }
 
@@ -127,7 +123,6 @@ function extractSimpleData(html, phone) {
   
   let address = extract('Address');
   
-  // Final check – if nothing found, return defaults
   return {
     Name: name,
     Mobile: phone,
