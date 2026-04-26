@@ -4,7 +4,6 @@ const axios = require('axios');
 const TARGET_URL = 'https://ownerdetail.datacorporation.com.pk/result-page/';
 const REFERER = 'https://ownerdetail.datacorporation.com.pk/track-number/';
 
-// Complete cookies – including FCCDCF, FCNEC (jo pehle missing the)
 const COOKIES = {
   _ga: 'GA1.1.1455301204.1770130461',
   __gads: 'ID=d6cf01242b53db4b:T=1770130463:RT=1770130463:S=ALNI_MakDvPYZ9f0HxxsHhucgw_Dqo7ibQ',
@@ -22,148 +21,103 @@ function getCookieString() {
     .join('; ');
 }
 
-// Advanced HTML parser – supports tables, divs, JSON, meta, etc.
-function advancedParseHTML(html, phone) {
-  const records = [];
+function cleanText(text) {
+  if (!text) return 'N/A';
+  return text
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractRealData(html, phone) {
+  // Remove script and style tags content so they don't interfere
+  let cleanHtml = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
+                      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ');
   
-  // Helper to clean text
-  const clean = (text) => {
-    if (!text) return 'N/A';
-    return String(text)
-      .replace(/<[^>]*>/g, '')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+  const record = {
+    Name: 'N/A',
+    Mobile: phone,
+    CNIC: 'N/A',
+    Address: 'N/A',
+    Province: 'N/A',
+    City: 'N/A',
+    Network: 'N/A',
+    Status: 'N/A',
+    Gender: 'N/A',
+    Union_Council: 'N/A'
   };
-  
-  // 1) Try to find JSON-LD or inline JSON
-  const jsonMatch = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/i);
-  if (jsonMatch) {
-    try {
-      const json = JSON.parse(jsonMatch[1]);
-      if (json.name || json.description) {
-        const record = {
-          Name: clean(json.name || json.title || 'N/A'),
-          Mobile: phone,
-          CNIC: json.cnic || json.identifier || 'N/A',
-          Address: clean(json.address || json.location || 'N/A'),
-          Province: clean(json.province || json.area?.province || 'N/A'),
-          City: clean(json.city || json.addressLocality || 'N/A'),
-          Network: clean(json.network || json.operator || 'N/A'),
-          Status: clean(json.status || 'Active'),
-          Gender: clean(json.gender || 'N/A'),
-          Union_Council: clean(json.unionCouncil || json.uc || 'N/A')
-        };
-        if (record.Name !== 'N/A') records.push(record);
-      }
-    } catch(e) {}
-  }
-  
-  // 2) Table parsing (most common)
-  const tableRegex = /<table[\s\S]*?<\/table>/gi;
-  let tableMatch;
-  while ((tableMatch = tableRegex.exec(html)) !== null) {
-    const table = tableMatch[0];
-    const rows = table.match(/<tr[\s\S]*?<\/tr>/gi);
-    if (rows) {
-      let record = { Mobile: phone };
-      for (const row of rows) {
-        const th = row.match(/<th[^>]*>([\s\S]*?)<\/th>/i);
-        const td = row.match(/<td[^>]*>([\s\S]*?)<\/td>/i);
-        if (th && td) {
-          const label = clean(th[1]).toLowerCase();
-          const value = clean(td[1]);
-          if (label.includes('name')) record.Name = value;
-          else if (label.includes('cnic')) record.CNIC = value;
-          else if (label.includes('address')) record.Address = value;
-          else if (label.includes('province')) record.Province = value;
-          else if (label.includes('city')) record.City = value;
-          else if (label.includes('network') || label.includes('operator')) record.Network = value;
-          else if (label.includes('status')) record.Status = value;
-          else if (label.includes('gender')) record.Gender = value;
-          else if (label.includes('union') || label.includes('uc')) record.Union_Council = value;
-        }
-      }
-      if (record.Name && record.Name !== 'N/A') records.push(record);
-    }
-  }
-  
-  // 3) Div with class="sim-details", "owner-info", etc.
-  const divRegex = /<div[^>]*class="[^"]*(?:sim|owner|detail|info)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
-  let divMatch;
-  while ((divMatch = divRegex.exec(html)) !== null) {
-    const div = divMatch[0];
-    let record = { Mobile: phone };
-    // Find label-value pairs inside div
-    const pairs = div.match(/<span[^>]*class="[^"]*label[^"]*"[^>]*>([\s\S]*?)<\/span>\s*<span[^>]*class="[^"]*value[^"]*"[^>]*>([\s\S]*?)<\/span>/gi);
-    if (pairs) {
-      for (const pair of pairs) {
-        const labelMatch = pair.match(/<span[^>]*class="[^"]*label[^"]*"[^>]*>([\s\S]*?)<\/span>/i);
-        const valueMatch = pair.match(/<span[^>]*class="[^"]*value[^"]*"[^>]*>([\s\S]*?)<\/span>/i);
-        if (labelMatch && valueMatch) {
-          const label = clean(labelMatch[1]).toLowerCase();
-          const value = clean(valueMatch[1]);
-          if (label.includes('name')) record.Name = value;
-          else if (label.includes('cnic')) record.CNIC = value;
-          else if (label.includes('address')) record.Address = value;
-          else if (label.includes('province')) record.Province = value;
-          else if (label.includes('city')) record.City = value;
-          else if (label.includes('network')) record.Network = value;
-          else if (label.includes('status')) record.Status = value;
-          else if (label.includes('gender')) record.Gender = value;
-          else if (label.includes('union')) record.Union_Council = value;
-        }
-      }
-      if (record.Name && record.Name !== 'N/A') records.push(record);
-    }
-  }
-  
-  // 4) Generic key-value patterns (fallback)
-  const patterns = [
-    { name: 'Name', regex: /Name[:\s]*([^<\n]+)/i },
-    { name: 'CNIC', regex: /\b(\d{13})\b/ },
-    { name: 'Address', regex: /Address[:\s]*([^<\n]+)/i },
-    { name: 'Province', regex: /Province[:\s]*([^<\n]+)/i },
-    { name: 'City', regex: /City[:\s]*([^<\n]+)/i },
-    { name: 'Network', regex: /Network[:\s]*([^<\n]+)/i },
-    { name: 'Status', regex: /Status[:\s]*([^<\n]+)/i },
-    { name: 'Gender', regex: /Gender[:\s]*([^<\n]+)/i },
-    { name: 'Union_Council', regex: /Union\s*Council[:\s]*([^<\n]+)/i }
+
+  // 1. Extract CNIC (13 digits) - most reliable
+  const cnicMatch = cleanHtml.match(/\b\d{13}\b/);
+  if (cnicMatch) record.CNIC = cnicMatch[0];
+
+  // 2. Extract Name from visible text (not inside inputs)
+  const namePatterns = [
+    /Name<\/th>\s*<td[^>]*>([^<]+)<\/td>/i,
+    /Owner\s*Name<\/th>\s*<td[^>]*>([^<]+)<\/td>/i,
+    /<strong>Name<\/strong>\s*:\s*([^<]+)/i,
+    /"name":"([^"]+)"/i
   ];
-  
-  let record = { Mobile: phone };
-  for (const p of patterns) {
-    const match = html.match(p.regex);
-    if (match) {
-      let val = clean(match[1] || match[0]);
-      if (p.name === 'CNIC') val = val.replace(/\D/g, '');
-      if (val !== 'N/A') record[p.name] = val;
+  for (let p of namePatterns) {
+    const m = cleanHtml.match(p);
+    if (m && m[1] && !m[1].includes('placeholder') && m[1].length < 100) {
+      record.Name = cleanText(m[1]);
+      break;
     }
   }
-  if (record.Name && record.Name !== 'N/A') records.push(record);
-  
-  // 5) Remove duplicates based on Name+CNIC
-  const unique = new Map();
-  for (const rec of records) {
-    const key = `${rec.Name}_${rec.CNIC}`;
-    if (!unique.has(key)) {
-      // Fill missing fields with defaults
-      unique.set(key, {
-        Name: rec.Name || 'N/A',
-        Mobile: phone,
-        CNIC: rec.CNIC || 'N/A',
-        Address: rec.Address || 'N/A',
-        Province: rec.Province || 'N/A',
-        City: rec.City || 'N/A',
-        Network: rec.Network || 'N/A',
-        Status: rec.Status || 'N/A',
-        Gender: rec.Gender || 'N/A',
-        Union_Council: rec.Union_Council || 'N/A'
-      });
+
+  // 3. Address
+  const addrPatterns = [
+    /Address<\/th>\s*<td[^>]*>([^<]+)<\/td>/i,
+    /<strong>Address<\/strong>\s*:\s*([^<]+)/i,
+    /"address":"([^"]+)"/i
+  ];
+  for (let p of addrPatterns) {
+    const m = cleanHtml.match(p);
+    if (m && m[1] && !m[1].includes('placeholder')) {
+      record.Address = cleanText(m[1]);
+      break;
     }
   }
-  
-  return Array.from(unique.values());
+
+  // 4. Province
+  const provMatch = cleanHtml.match(/Province<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) ||
+                    cleanHtml.match(/Punjab|Sindh|KPK|Balochistan|Islamabad/i);
+  if (provMatch) record.Province = cleanText(provMatch[1] || provMatch[0]);
+
+  // 5. City
+  const cityMatch = cleanHtml.match(/City<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) ||
+                    cleanHtml.match(/Lahore|Karachi|Islamabad|Rawalpindi|Multan|Faisalabad|Quetta|Peshawar/i);
+  if (cityMatch) record.City = cleanText(cityMatch[1] || cityMatch[0]);
+
+  // 6. Network
+  const netMatch = cleanHtml.match(/Network<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) ||
+                   cleanHtml.match(/Jazz|Zong|Telenor|Ufone|Warid/i);
+  if (netMatch) record.Network = cleanText(netMatch[1] || netMatch[0]);
+
+  // 7. Status
+  const statusMatch = cleanHtml.match(/Status<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) ||
+                      cleanHtml.match(/Active|Inactive|Blocked/i);
+  if (statusMatch) record.Status = cleanText(statusMatch[1] || statusMatch[0]);
+
+  // 8. Gender
+  const genderMatch = cleanHtml.match(/Gender<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) ||
+                      cleanHtml.match(/Male|Female/i);
+  if (genderMatch) record.Gender = cleanText(genderMatch[1] || genderMatch[0]);
+
+  // 9. Union Council
+  const ucMatch = cleanHtml.match(/Union\s*Council<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) ||
+                  cleanHtml.match(/UC<\/th>\s*<td[^>]*>([^<]+)<\/td>/i);
+  if (ucMatch) record.Union_Council = cleanText(ucMatch[1]);
+
+  // If still no name, try to find any text that looks like a person name (two words, not too long)
+  if (record.Name === 'N/A') {
+    const possibleName = cleanHtml.match(/([A-Z][a-z]+)\s+([A-Z][a-z]+)/);
+    if (possibleName && possibleName[0].length < 30) record.Name = possibleName[0];
+  }
+
+  return record;
 }
 
 module.exports = async (req, res) => {
@@ -175,7 +129,7 @@ module.exports = async (req, res) => {
   if (!search) {
     return res.json({
       success: false,
-      message: '❌ Please provide a phone number (e.g., 03001234567)',
+      message: '❌ Please provide phone number',
       developer: 'WASIF ALI',
       telegram: '@FREEHACKS95'
     });
@@ -194,22 +148,21 @@ module.exports = async (req, res) => {
         'Referer': REFERER,
         'Cookie': getCookieString(),
         'DNT': '1',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'same-origin',
-        'Sec-Fetch-User': '?1'
+        'Upgrade-Insecure-Requests': '1'
       },
-      timeout: 25000
+      timeout: 20000
     });
 
     const html = response.data;
-    const records = advancedParseHTML(html, phoneWithZero);
+    const record = extractRealData(html, phoneWithZero);
 
-    if (!records || records.length === 0) {
+    // Check if we got any real data
+    const hasData = record.Name !== 'N/A' || record.CNIC !== 'N/A' || record.Address !== 'N/A';
+    
+    if (!hasData) {
       return res.json({
         success: false,
-        message: '❌ No record found for this number',
+        message: '❌ No data found for this number',
         records: [],
         developer: 'WASIF ALI',
         telegram: '@FREEHACKS95'
@@ -218,14 +171,13 @@ module.exports = async (req, res) => {
 
     return res.json({
       success: true,
-      message: `✅ Record found - ${records.length} record(s)`,
-      records: records,
+      message: '✅ Record found',
+      records: [record],
       developer: 'WASIF ALI',
       telegram: '@FREEHACKS95'
     });
 
   } catch (error) {
-    console.error('API Error:', error.message);
     return res.json({
       success: false,
       message: '⚠️ Error: ' + error.message,
