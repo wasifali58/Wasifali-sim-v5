@@ -16,6 +16,30 @@ function getCookieString() {
   return Object.entries(COOKIES).map(([key, value]) => `${key}=${value}`).join('; ');
 }
 
+function cleanText(text) {
+  if (!text) return 'N/A';
+  let cleaned = text.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+  if (cleaned.length > 200) cleaned = cleaned.substring(0, 200);
+  if (/transform|opacity|animation|webkit|@media|{}/i.test(cleaned)) return 'N/A';
+  return cleaned;
+}
+
+function extractField(html, keyword) {
+  const tablePattern = new RegExp(`<th[^>]*>\\s*${keyword}\\s*<\\/th>\\s*<td[^>]*>\\s*([\\s\\S]*?)\\s*<\\/td>`, 'i');
+  const match1 = html.match(tablePattern);
+  if (match1 && match1[1]) {
+    const val = cleanText(match1[1]);
+    if (val !== 'N/A') return val;
+  }
+  const strongPattern = new RegExp(`<strong>${keyword}<\\/strong>\\s*:\\s*([^<]+)`, 'i');
+  const match2 = html.match(strongPattern);
+  if (match2 && match2[1]) return cleanText(match2[1]);
+  const simplePattern = new RegExp(`${keyword}\\s*[:=-]\\s*([^<\\n]{1,150})`, 'i');
+  const match3 = html.match(simplePattern);
+  if (match3 && match3[1]) return cleanText(match3[1]);
+  return 'N/A';
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Content-Type', 'application/json');
@@ -23,25 +47,42 @@ module.exports = async (req, res) => {
   const { search } = req.method === 'GET' ? req.query : req.body;
 
   if (!search) {
-    const errorResponse = {
+    return res.send(JSON.stringify({
       success: false,
-      message: '❌ Please provide search parameter (Phone Number)',
+      message: '❌ Please provide a phone number (e.g., 03001234567)',
       developer: 'WASIF ALI',
       telegram: '@FREEHACKS95'
-    };
-    return res.send(JSON.stringify(errorResponse, null, 2));
+    }, null, 2));
   }
 
-  const cleanPhone = search.replace(/\D/g, '');
-  const phoneWithZero = cleanPhone.startsWith('0') ? cleanPhone : '0' + cleanPhone;
+  const digits = search.replace(/\D/g, '');
+
+  if (digits.length === 13) {
+    return res.send(JSON.stringify({
+      success: false,
+      message: '❌ CNIC search is not allowed. Please provide a mobile number.',
+      developer: 'WASIF ALI',
+      telegram: '@FREEHACKS95'
+    }, null, 2));
+  }
+
+  if (digits.length < 10 || digits.length > 13) {
+    return res.send(JSON.stringify({
+      success: false,
+      message: '❌ Invalid phone number. Please enter a valid Pakistani number (e.g., 03001234567).',
+      developer: 'WASIF ALI',
+      telegram: '@FREEHACKS95'
+    }, null, 2));
+  }
+
+  const phoneWithZero = digits.startsWith('0') ? digits : '0' + digits;
 
   try {
     const response = await axios.get(TARGET_URL, {
       params: { sim_info_mobile: phoneWithZero },
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9,ur-PK;q=0.8,ur;q=0.7',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/146.0.0.0 Mobile Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Referer': REFERER,
         'Cookie': getCookieString(),
         'DNT': '1',
@@ -53,77 +94,66 @@ module.exports = async (req, res) => {
     const html = response.data;
     const result = parseHTML(html, phoneWithZero);
 
-    let finalResponse;
     if (result.found) {
-      finalResponse = {
+      return res.send(JSON.stringify({
         success: true,
         message: `✅ Record found - ${result.records.length} record(s)`,
         records: result.records,
         developer: 'WASIF ALI',
         telegram: '@FREEHACKS95'
-      };
+      }, null, 2));
     } else {
-      finalResponse = {
+      return res.send(JSON.stringify({
         success: false,
         message: '❌ No record found for this number',
         records: [],
         developer: 'WASIF ALI',
         telegram: '@FREEHACKS95'
-      };
+      }, null, 2));
     }
-    return res.send(JSON.stringify(finalResponse, null, 2));
-
   } catch (error) {
-    const errorResponse = {
+    return res.send(JSON.stringify({
       success: false,
-      message: '⚠️ Error: ' + error.message,
+      message: '⚠️ Error: ' + (error.message || 'Request failed'),
       records: [],
       developer: 'WASIF ALI',
       telegram: '@FREEHACKS95'
-    };
-    return res.send(JSON.stringify(errorResponse, null, 2));
+    }, null, 2));
   }
 };
 
 function parseHTML(html, phone) {
   const records = [];
   try {
-    const cleanHtml = html.replace(/\n|\r/g, ' ').replace(/&nbsp;/g, ' ');
+    let cleanHtml = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ');
+    cleanHtml = cleanHtml.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ');
+    cleanHtml = cleanHtml.replace(/\n|\r/g, ' ').replace(/&nbsp;/g, ' ');
 
-    function extractField(keyword) {
-      let regex = new RegExp(`${keyword}[^<]*<\/(?:td|th|span|div|strong|b)>\\s*<(?:td|th|span|div)[^>]*>\\s*([^<]+)`, 'i');
-      let match = cleanHtml.match(regex);
-      if (match && match[1].trim() !== '') return match[1].trim();
-
-      regex = new RegExp(`${keyword}\\s*[:=-]\\s*(?:<[^>]+>)*\\s*([^<]+)`, 'i');
-      match = cleanHtml.match(regex);
-      if (match && match[1].trim() !== '') return match[1].trim();
-      
-      regex = new RegExp(`(?:>|"${keyword}"?[:>\\s]*)(?:<[^>]+>)*${keyword}(?:<[^>]+>)*[:\\s]*(?:<[^>]+>)*([^<]+)`, 'i');
-      match = cleanHtml.match(regex);
-      if (match && match[1].trim() !== '') return match[1].trim();
-
-      return 'N/A';
-    }
-
-    const name = extractField('Name') !== 'N/A' ? extractField('Name') : extractField('Owner');
-    const cnicRaw = extractField('CNIC') !== 'N/A' ? extractField('CNIC') : extractField('ID');
-    const cnic = cnicRaw.replace(/\D/g, '');
-    const address = extractField('Address');
-    const city = extractField('City');
-    const unionCouncil = extractField('Union Council') !== 'N/A' ? extractField('Union Council') : extractField('UC');
-    const status = extractField('Status') !== 'N/A' ? extractField('Status') : 'Active';
+    const name = extractField(cleanHtml, 'Name');
+    const finalName = (name !== 'N/A') ? name : extractField(cleanHtml, 'Owner');
     
-    let network = extractField('Network');
-    if (network === 'N/A') network = extractField('Operator');
+    let cnic = extractField(cleanHtml, 'CNIC');
+    if (cnic === 'N/A') cnic = extractField(cleanHtml, 'ID');
+    const cnicDigits = cnic.replace(/\D/g, '');
+    
+    const address = extractField(cleanHtml, 'Address');
+    const city = extractField(cleanHtml, 'City');
+    const unionCouncil = extractField(cleanHtml, 'Union Council');
+    const uc = (unionCouncil !== 'N/A') ? unionCouncil : extractField(cleanHtml, 'UC');
+    const status = extractField(cleanHtml, 'Status');
+    const finalStatus = (status !== 'N/A') ? status : 'Active';
+    
+    let network = extractField(cleanHtml, 'Network');
+    if (network === 'N/A') network = extractField(cleanHtml, 'Operator');
 
-    let province = 'N/A';
-    let gender = 'N/A';
+    // Gender: first try site's own Gender field
+    let gender = extractField(cleanHtml, 'Gender');
+    if (gender === 'N/A') gender = extractField(cleanHtml, 'Sex');
 
-    if (cnic.length >= 13) {
-      const lastDigit = parseInt(cnic.charAt(12));
-      gender = (lastDigit % 2 === 0) ? 'Female' : 'Male';
-      const firstDigit = cnic.charAt(0);
+    // Province: try site first, else from CNIC
+    let province = extractField(cleanHtml, 'Province');
+    if (province === 'N/A' && cnicDigits.length === 13) {
+      const firstDigit = cnicDigits.charAt(0);
       const provinceMap = {
         '1': 'Khyber Pakhtunkhwa', '2': 'FATA', '3': 'Punjab',
         '4': 'Sindh', '5': 'Balochistan', '6': 'Islamabad',
@@ -132,22 +162,28 @@ function parseHTML(html, phone) {
       province = provinceMap[firstDigit] || 'N/A';
     }
 
-    if (name !== 'N/A' || cnic !== '' || address !== 'N/A') {
+    // Gender fallback: CNIC last digit (only if site didn't give)
+    if (gender === 'N/A' && cnicDigits.length === 13) {
+      const lastDigit = parseInt(cnicDigits.charAt(12));
+      gender = (lastDigit % 2 === 0) ? 'Female' : 'Male';
+    }
+
+    if (finalName !== 'N/A' || cnicDigits !== '' || address !== 'N/A') {
       records.push({
-        Name: name,
+        Name: finalName,
         Mobile: phone,
-        CNIC: cnic || 'N/A',
+        CNIC: cnicDigits || 'N/A',
         Address: address,
         Province: province,
         City: city,
         Network: network,
-        Status: status,
+        Status: finalStatus,
         Gender: gender,
-        Union_Council: unionCouncil
+        Union_Council: uc
       });
     }
   } catch (e) {
     console.error('Parse error:', e.message);
   }
-  return { found: records.length > 0, records: records };
+  return { found: records.length > 0, records };
 }
