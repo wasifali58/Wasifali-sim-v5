@@ -19,23 +19,65 @@ module.exports = async (req, res) => {
   const phoneWithZero = cleanPhone.startsWith('0') ? cleanPhone : '0' + cleanPhone;
 
   try {
-    // Direct GET request - same as browser
+    // Option 1: Pehle home page visit karo (session lene ke liye)
+    await axios.get('https://ownerdetail.datacorporation.com.pk/', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+      }
+    });
+
+    // Option 2: Track page visit karo
+    await axios.get('https://ownerdetail.datacorporation.com.pk/track-number/', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Referer': 'https://ownerdetail.datacorporation.com.pk/',
+        'Accept-Language': 'en-US,en;q=0.9'
+      }
+    });
+
+    // Option 3: Ab result page call karo
     const response = await axios.get('https://ownerdetail.datacorporation.com.pk/result-page/', {
       params: { sim_info_mobile: phoneWithZero },
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,ur-PK;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
         'Referer': 'https://ownerdetail.datacorporation.com.pk/track-number/',
-        'Cookie': '_ga=GA1.1.1455301204.1770130461; __gads=ID=d6cf01242b53db4b:T=1770130463:RT=1770130463:S=ALNI_MakDvPYZ9f0HxxsHhucgw_Dqo7ibQ'
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0'
       },
-      timeout: 20000
+      timeout: 30000,
+      maxRedirects: 5
     });
 
     const html = response.data;
     
-    // Extract data from HTML response
-    const result = extractSimData(html, phoneWithZero);
+    // Check if we got actual data
+    if (html.includes('No record') || html.includes('not found') || html.length < 500) {
+      return res.json({
+        success: false,
+        message: '❌ No record found for this number',
+        records: [],
+        developer: 'WASIF ALI',
+        telegram: '@FREEHACKS95'
+      });
+    }
+    
+    const result = extractDataFromHTML(html, phoneWithZero);
     
     return res.json({
       success: result.found,
@@ -48,7 +90,7 @@ module.exports = async (req, res) => {
   } catch (error) {
     return res.json({
       success: false,
-      message: '⚠️ Error: ' + error.message,
+      message: '⚠️ ' + error.message,
       records: [],
       developer: 'WASIF ALI',
       telegram: '@FREEHACKS95'
@@ -56,52 +98,33 @@ module.exports = async (req, res) => {
   }
 };
 
-function extractSimData(html, phone) {
+function extractDataFromHTML(html, phone) {
   try {
-    // Method 1: Look for JSON data in script tags
-    const jsonMatch = html.match(/var\s+simData\s*=\s*({[^;]+})/i) ||
-                      html.match(/{"name":"[^"]+","cnic":"[^"]+"/i);
-    
-    if (jsonMatch) {
-      try {
-        const data = JSON.parse(jsonMatch[1]);
-        return {
-          found: true,
-          records: [{
-            Name: data.name || data.full_name || 'N/A',
-            Mobile: phone,
-            CNIC: data.cnic || data.nic || 'N/A',
-            Address: data.address || data.permanent_address || 'N/A',
-            Province: data.province || 'N/A',
-            City: data.city || 'N/A',
-            Network: data.network || data.operator || 'N/A',
-            Status: data.status || 'Active',
-            Gender: data.gender || 'N/A',
-            Union_Council: data.union_council || data.uc || 'N/A'
-          }]
-        };
-      } catch(e) {}
-    }
-    
-    // Method 2: Extract from HTML elements
-    const getValue = (pattern) => {
-      const match = html.match(pattern);
-      return match ? match[1].replace(/<[^>]*>/g, '').trim() : 'N/A';
+    // Try to find data in table format
+    const extract = (label) => {
+      const patterns = [
+        new RegExp(`${label}[\\s:]*<\\/td>\\s*<td[^>]*>([^<]+)<\\/td>`, 'i'),
+        new RegExp(`${label}[\\s:]*<[^>]*>([^<]+)<`, 'i'),
+        new RegExp(`${label}[\\s:]*([^<\\n]+)`, 'i')
+      ];
+      
+      for (const pattern of patterns) {
+        const match = html.match(pattern);
+        if (match && match[1] && !match[1].includes('undefined')) {
+          return match[1].replace(/<[^>]*>/g, '').trim();
+        }
+      }
+      return 'N/A';
     };
     
-    const name = getValue(/Name<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) ||
-                 getValue(/Owner[^>]*>([^<]+)</i) ||
-                 html.match(/<h1[^>]*>([^<]+)<\/h1>/i)?.[1] || 'N/A';
-    
+    const name = extract('Name') || extract('Owner') || 'N/A';
     const cnic = html.match(/\b\d{13}\b/)?.[0] || 'N/A';
-    
-    const address = getValue(/Address<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) || 'N/A';
-    const province = getValue(/Province<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) || 'N/A';
-    const city = getValue(/City<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) || 'N/A';
-    const network = getValue(/Network<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) ||
-                    html.match(/Jazz|Zong|Telenor|Ufone|Warid/i)?.[0] || 'N/A';
-    const status = getValue(/Status<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) || 'Active';
-    const gender = getValue(/Gender<\/th>\s*<td[^>]*>([^<]+)<\/td>/i) || 'N/A';
+    const address = extract('Address') || 'N/A';
+    const province = extract('Province') || 'N/A';
+    const city = extract('City') || extract('District') || 'N/A';
+    const network = html.match(/Jazz|Zong|Telenor|Ufone|Warid/i)?.[0] || extract('Network') || 'N/A';
+    const status = extract('Status') || 'Active';
+    const gender = extract('Gender') || 'N/A';
     
     if (name === 'N/A' && cnic === 'N/A') {
       return { found: false, records: [] };
