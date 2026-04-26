@@ -1,11 +1,7 @@
 {
-  "name": "wasif-ali-sim-db",
+  "name": "wasifali-sim-v5",
   "version": "1.0.0",
-  "description": "Sim Database API with CNIC Support",
-  "scripts": {
-    "start": "node api/index.js"
-  },
   "dependencies": {
-    "axios": "^1.6.8"
+    "axios": "^1.6.0"
   }
 }
