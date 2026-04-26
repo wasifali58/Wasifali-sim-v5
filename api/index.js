@@ -1,10 +1,8 @@
 const axios = require('axios');
 
-// NEW API - datacorporation.com.pk
 const TARGET_URL = 'https://ownerdetail.datacorporation.com.pk/result-page/';
 const REFERER = 'https://ownerdetail.datacorporation.com.pk/track-number/';
 
-// Cookies from browser
 const COOKIES = {
   _ga: 'GA1.1.1455301204.1770130461',
   __gads: 'ID=d6cf01242b53db4b:T=1770130463:RT=1770130463:S=ALNI_MakDvPYZ9f0HxxsHhucgw_Dqo7ibQ',
@@ -14,11 +12,8 @@ const COOKIES = {
   _ga_2BL9GP4ZMR: 'GS2.1.s1770130463$o1$g1$t1770130544$j60$l0$h0'
 };
 
-// Convert cookies object to string
 function getCookieString() {
-  return Object.entries(COOKIES)
-    .map(([key, value]) => `${key}=${value}`)
-    .join('; ');
+  return Object.entries(COOKIES).map(([key, value]) => `${key}=${value}`).join('; ');
 }
 
 module.exports = async (req, res) => {
@@ -28,20 +23,19 @@ module.exports = async (req, res) => {
   const { search } = req.method === 'GET' ? req.query : req.body;
 
   if (!search) {
-    return res.json({
+    const errorResponse = {
       success: false,
       message: '❌ Please provide search parameter (Phone Number)',
       developer: 'WASIF ALI',
       telegram: '@FREEHACKS95'
-    });
+    };
+    return res.send(JSON.stringify(errorResponse, null, 2));
   }
 
-  // Clean phone number
   const cleanPhone = search.replace(/\D/g, '');
   const phoneWithZero = cleanPhone.startsWith('0') ? cleanPhone : '0' + cleanPhone;
 
   try {
-    // Call their API
     const response = await axios.get(TARGET_URL, {
       params: { sim_info_mobile: phoneWithZero },
       headers: {
@@ -57,60 +51,54 @@ module.exports = async (req, res) => {
     });
 
     const html = response.data;
-    
-    // Parse HTML to extract data
     const result = parseHTML(html, phoneWithZero);
 
+    let finalResponse;
     if (result.found) {
-      return res.json({
+      finalResponse = {
         success: true,
         message: `✅ Record found - ${result.records.length} record(s)`,
         records: result.records,
         developer: 'WASIF ALI',
         telegram: '@FREEHACKS95'
-      });
+      };
     } else {
-      return res.json({
+      finalResponse = {
         success: false,
         message: '❌ No record found for this number',
         records: [],
         developer: 'WASIF ALI',
         telegram: '@FREEHACKS95'
-      });
+      };
     }
+    return res.send(JSON.stringify(finalResponse, null, 2));
 
   } catch (error) {
-    return res.json({
+    const errorResponse = {
       success: false,
       message: '⚠️ Error: ' + error.message,
       records: [],
       developer: 'WASIF ALI',
       telegram: '@FREEHACKS95'
-    });
+    };
+    return res.send(JSON.stringify(errorResponse, null, 2));
   }
 };
 
-// HTML parsing function with Advanced Extraction
 function parseHTML(html, phone) {
   const records = [];
-  
   try {
-    // Clean HTML to make parsing easier (remove line breaks & extra spaces)
     const cleanHtml = html.replace(/\n|\r/g, ' ').replace(/&nbsp;/g, ' ');
 
-    // Dynamic field extractor function
     function extractField(keyword) {
-      // Pattern 1: Matches Table structures <td>Keyword</td> <td>Value</td>
       let regex = new RegExp(`${keyword}[^<]*<\/(?:td|th|span|div|strong|b)>\\s*<(?:td|th|span|div)[^>]*>\\s*([^<]+)`, 'i');
       let match = cleanHtml.match(regex);
       if (match && match[1].trim() !== '') return match[1].trim();
 
-      // Pattern 2: Matches Keyword : Value
       regex = new RegExp(`${keyword}\\s*[:=-]\\s*(?:<[^>]+>)*\\s*([^<]+)`, 'i');
       match = cleanHtml.match(regex);
       if (match && match[1].trim() !== '') return match[1].trim();
       
-      // Pattern 3: Fallback for generic tags
       regex = new RegExp(`(?:>|"${keyword}"?[:>\\s]*)(?:<[^>]+>)*${keyword}(?:<[^>]+>)*[:\\s]*(?:<[^>]+>)*([^<]+)`, 'i');
       match = cleanHtml.match(regex);
       if (match && match[1].trim() !== '') return match[1].trim();
@@ -118,41 +106,28 @@ function parseHTML(html, phone) {
       return 'N/A';
     }
 
-    // Extract Basic Fields
     const name = extractField('Name') !== 'N/A' ? extractField('Name') : extractField('Owner');
     const cnicRaw = extractField('CNIC') !== 'N/A' ? extractField('CNIC') : extractField('ID');
-    const cnic = cnicRaw.replace(/\D/g, ''); // Keep only numbers
+    const cnic = cnicRaw.replace(/\D/g, '');
     const address = extractField('Address');
     const city = extractField('City');
     const unionCouncil = extractField('Union Council') !== 'N/A' ? extractField('Union Council') : extractField('UC');
     const status = extractField('Status') !== 'N/A' ? extractField('Status') : 'Active';
     
-    // Extract Network directly from site
     let network = extractField('Network');
-    if (network === 'N/A') {
-      network = extractField('Operator');
-    }
+    if (network === 'N/A') network = extractField('Operator');
 
-    // Auto-detect Province and Gender from CNIC Logic
     let province = 'N/A';
     let gender = 'N/A';
 
     if (cnic.length >= 13) {
-      // 1. Gender check (Last digit: Odd = Male, Even = Female)
       const lastDigit = parseInt(cnic.charAt(12));
       gender = (lastDigit % 2 === 0) ? 'Female' : 'Male';
-
-      // 2. Province check (First digit)
       const firstDigit = cnic.charAt(0);
       const provinceMap = {
-        '1': 'Khyber Pakhtunkhwa',
-        '2': 'FATA',
-        '3': 'Punjab',
-        '4': 'Sindh',
-        '5': 'Balochistan',
-        '6': 'Islamabad',
-        '7': 'Gilgit-Baltistan',
-        '8': 'AJK'
+        '1': 'Khyber Pakhtunkhwa', '2': 'FATA', '3': 'Punjab',
+        '4': 'Sindh', '5': 'Balochistan', '6': 'Islamabad',
+        '7': 'Gilgit-Baltistan', '8': 'AJK'
       };
       province = provinceMap[firstDigit] || 'N/A';
     }
@@ -171,13 +146,8 @@ function parseHTML(html, phone) {
         Union_Council: unionCouncil
       });
     }
-    
   } catch (e) {
     console.error('Parse error:', e.message);
   }
-  
-  return {
-    found: records.length > 0,
-    records: records
-  };
+  return { found: records.length > 0, records: records };
 }
